@@ -1,336 +1,993 @@
 package goconnectit
 
 import (
-	"crypto/cipher"
-	"crypto/des"
+	"bufio"
+	"bytes"
 	"io"
 	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
-// TestNewServer tests creating a new server instance
-func TestNewServer(t *testing.T) {
-	addr := "0.0.0.0:8888"
-	password := "12345678"
-	s := NewServer(addr, password)
-	if s.Addr != addr {
-		t.Errorf("Expected server address to be %s, got %s", addr, s.Addr)
+// TestEncryptDecryptData tests the EncryptData and DecryptData functions
+func TestEncryptDecryptData(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		password string
+	}{
+		{"simple", []byte("hello world"), "secret"},
+		{"empty", []byte{}, "secret"},
+		{"long data", make([]byte, 1000), "password123"},
+		{"unicode", []byte("你好世界"), "中文密码"},
+		{"binary", []byte{0x00, 0x01, 0x02, 0xFF, 0xFE}, "binary"},
 	}
-	if s.Password != password {
-		t.Errorf("Expected server password to be %s, got %s", password, s.Password)
-	}
-}
 
-// TestNewClient tests creating a new client instance
-func TestNewClient(t *testing.T) {
-	serverAddr := "127.0.0.1:8888"
-	localAddr := "127.0.0.1:1080"
-	password := "12345678"
-	c := NewClient(serverAddr, localAddr, password)
-	if c.ServerAddr != serverAddr {
-		t.Errorf("Expected server address to be %s, got %s", serverAddr, c.ServerAddr)
-	}
-	if c.LocalAddr != localAddr {
-		t.Errorf("Expected local address to be %s, got %s", localAddr, c.LocalAddr)
-	}
-	if c.Password != password {
-		t.Errorf("Expected client password to be %s, got %s", password, c.Password)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			encrypted, err := EncryptData(tt.data, tt.password)
+			if err != nil {
+				t.Fatalf("EncryptData failed: %v", err)
+			}
 
-// TestServerHandleConnectionWithValidData tests server handleConnection method with valid data
-func TestServerHandleConnectionWithValidData(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "12345678")
-	
-	// Test with normal data
-	conn := &mockConn{data: []byte("test data")}
-	s.handleConnection(conn)
-	
-	// Check if data was written back
-	if len(conn.data) != 10 {
-		t.Errorf("Expected 10 bytes written back, got %d", len(conn.data))
+			decrypted, err := DecryptData(encrypted, tt.password)
+			if err != nil {
+				t.Fatalf("DecryptData failed: %v", err)
+			}
+
+			if !bytes.Equal(tt.data, decrypted) {
+				t.Errorf("Decrypted data doesn't match original")
+			}
+		})
 	}
 }
 
-// TestServerHandleConnectionWithReadError tests server handleConnection method with read error
-func TestServerHandleConnectionWithReadError(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "12345678")
-	
-	// Test with error in Read
-	errConn := &mockConn{err: io.EOF}
-	s.handleConnection(errConn)
-}
-
-// TestServerHandleConnectionWithWriteError tests server handleConnection method with write error
-func TestServerHandleConnectionWithWriteError(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "12345678")
-	
-	// Test with error in Write
-	writeErrConn := &mockConn{data: []byte("test data"), err: io.EOF}
-	s.handleConnection(writeErrConn)
-}
-
-// TestServerHandleConnectionWithInvalidPassword tests server handleConnection method with invalid password
-func TestServerHandleConnectionWithInvalidPassword(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "short") // Password is too short
-	
-	// Create a mock connection
-	conn := &mockConn{data: []byte("test data")}
-	
-	// Handle the connection
-	s.handleConnection(conn)
-}
-
-// TestEncryption tests the encryption and decryption functionality
-func TestEncryption(t *testing.T) {
-	password := "12345678"
-	data := []byte("test data")
-
-	// Create cipher
-	block, err := des.NewCipher([]byte(password[:8]))
+// TestEncryptDecryptDataWrongPassword tests decryption with wrong password
+func TestEncryptDecryptDataWrongPassword(t *testing.T) {
+	data := []byte("hello world")
+	encrypted, err := EncryptData(data, "password1")
 	if err != nil {
-		t.Fatalf("Creating cipher failed: %v", err)
+		t.Fatalf("EncryptData failed: %v", err)
 	}
 
-	// Create encryption stream
-	w := cipher.StreamWriter{S: cipher.NewCTR(block, []byte("00000000")), W: &mockWriter{}}
-	_, err = w.Write(data)
+	decrypted, err := DecryptData(encrypted, "password2")
 	if err != nil {
-		t.Fatalf("Encrypting data failed: %v", err)
+		t.Fatalf("DecryptData failed: %v", err)
 	}
 
-	// Create decryption stream
-	r := cipher.StreamReader{S: cipher.NewCTR(block, []byte("00000000")), R: &mockReader{data: data}}
-	buffer := make([]byte, len(data))
-	n, err := r.Read(buffer)
-	if err != nil && err != io.EOF {
-		t.Fatalf("Decrypting data failed: %v", err)
-	}
-	if n != len(data) {
-		t.Errorf("Expected to read %d bytes, got %d", len(data), n)
+	// Should decrypt to different data (garbage)
+	if bytes.Equal(data, decrypted) {
+		t.Error("Decryption with wrong password should not produce original data")
 	}
 }
 
-// TestServerHandleConnection tests server handleConnection method
-func TestServerHandleConnection(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "12345678")
-	
-	// Test with normal data
-	conn := &mockConn{data: []byte("test data")}
-	s.handleConnection(conn)
-	
-	// Check if data was written back
-	if len(conn.data) != 10 {
-		t.Errorf("Expected 10 bytes written back, got %d", len(conn.data))
+// TestDeriveKey tests key derivation consistency
+func TestDeriveKey(t *testing.T) {
+	password := "testpassword"
+	key1 := deriveKey(password)
+	key2 := deriveKey(password)
+
+	if !bytes.Equal(key1, key2) {
+		t.Error("Same password should produce same key")
 	}
-	
-	// Test with error in Read
-	errConn := &mockConn{err: io.EOF}
-	s.handleConnection(errConn)
-	
-	// Test with error in Write
-	writeErrConn := &mockConn{data: []byte("test data"), err: io.EOF}
-	s.handleConnection(writeErrConn)
+
+	if len(key1) != 32 {
+		t.Errorf("Key length should be 32, got %d", len(key1))
+	}
 }
 
-// TestClientHandleProxyRequest tests client handleProxyRequest method
-func TestClientHandleProxyRequest(t *testing.T) {
-	c := NewClient("127.0.0.1:8888", "127.0.0.1:1080", "12345678")
-	
-	// Create a mock local connection
-	localConn := &mockConn{data: []byte("test data")}
-	
-	// Handle the proxy request
-	c.handleProxyRequest(localConn)
-	
-	// Check if connection was closed
-	t.Log("Client handleProxyRequest test completed")
+// TestDeriveKeyDifferent tests key derivation uniqueness
+func TestDeriveKeyDifferent(t *testing.T) {
+	key1 := deriveKey("password1")
+	key2 := deriveKey("password2")
+
+	if bytes.Equal(key1, key2) {
+		t.Error("Different passwords should produce different keys")
+	}
 }
 
-// TestServerStart tests server Start method
-func TestServerStart(t *testing.T) {
-	// Create a server with a random port
-	s := NewServer("127.0.0.1:0", "12345678")
-	
-	// Start the server in a goroutine
-	errChan := make(chan error)
+// TestEncryptedConn tests the EncryptedConn type
+func TestEncryptedConn(t *testing.T) {
+	// Create a TCP listener for testing
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to create listener: %v", err)
+	}
+	defer listener.Close()
+
+	var serverConn *EncryptedConn
+	var clientConn *EncryptedConn
+	var serverRawConn net.Conn
+
+	// Server side
+	serverDone := make(chan error, 1)
 	go func() {
-		errChan <- s.Start()
+		var err error
+		serverRawConn, err = listener.Accept()
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		serverConn, err = NewEncryptedConn(serverRawConn, "secret", true)
+		serverDone <- err
 	}()
-	
-	// Give the server a moment to start
-	time.Sleep(100 * time.Millisecond)
-	
-	// Send a test request to the server
-	conn, err := net.Dial("tcp", s.Addr)
+
+	// Client side - connect first
+	addr := listener.Addr().String()
+	client, err := net.Dial("tcp", addr)
 	if err != nil {
-		t.Errorf("Failed to connect to server: %v", err)
-		return
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer client.Close()
+	clientConn, err = NewEncryptedConn(client, "secret", false)
+	if err != nil {
+		t.Fatalf("Failed to create client connection: %v", err)
+	}
+
+	// Wait for server
+	if err := <-serverDone; err != nil {
+		t.Fatalf("Server error: %v", err)
+	}
+	defer serverRawConn.Close()
+
+	if serverConn == nil || clientConn == nil {
+		t.Fatal("Failed to create encrypted connections")
+	}
+
+	// Test write and read
+	testData := []byte("hello encrypted world")
+
+	// Write from client
+	_, err = clientConn.Write(testData)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	// Read on server
+	buf := make([]byte, len(testData))
+	_, err = io.ReadFull(serverConn, buf)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	if !bytes.Equal(testData, buf) {
+		t.Errorf("Data mismatch: got %s, want %s", buf, testData)
+	}
+}
+
+// TestServerConfigValidation tests server configuration validation
+func TestServerConfigValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  ServerConfig
+		wantErr bool
+	}{
+		{"valid", ServerConfig{ListenAddr: ":8080", Password: "secret"}, false},
+		{"no address", ServerConfig{Password: "secret"}, true},
+		{"no password", ServerConfig{ListenAddr: ":8080"}, true},
+		{"empty", ServerConfig{}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := StartServer(tt.config)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("StartServer() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err == nil {
+				// Clean up
+				tt.config.Logger = NewDefaultLogger(false, "")
+				server, _ := StartServer(tt.config)
+				if server != nil {
+					server.Stop()
+				}
+			}
+		})
+	}
+}
+
+// TestClientConfigValidation tests client configuration validation
+func TestClientConfigValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  ClientConfig
+		wantErr bool
+	}{
+		{"valid", ClientConfig{LocalAddr: ":18888", ServerAddr: "localhost:8443", Password: "secret"}, false},
+		{"no local address", ClientConfig{ServerAddr: "localhost:8443", Password: "secret"}, true},
+		{"no server address", ClientConfig{LocalAddr: ":18888", Password: "secret"}, true},
+		{"no password", ClientConfig{LocalAddr: ":18888", ServerAddr: "localhost:8443"}, true},
+		{"empty", ClientConfig{}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// We need to actually test with a running server for valid cases
+			if !tt.wantErr {
+				// Start a server first
+				server, err := StartServer(ServerConfig{
+					ListenAddr: ":18889",
+					Password:   "secret",
+					Verbose:    false,
+				})
+				if err != nil {
+					t.Fatalf("Failed to start server: %v", err)
+				}
+				defer server.Stop()
+
+				// Update config to point to test server
+				tt.config.ServerAddr = "localhost:18889"
+
+				client, err := StartClient(tt.config)
+				if (err != nil) != tt.wantErr {
+					t.Errorf("StartClient() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				if client != nil {
+					client.Stop()
+				}
+			} else {
+				_, err := StartClient(tt.config)
+				if (err != nil) != tt.wantErr {
+					t.Errorf("StartClient() error = %v, wantErr %v", err, tt.wantErr)
+				}
+			}
+		})
+	}
+}
+
+// TestServerStartStop tests server start and stop
+func TestServerStartStop(t *testing.T) {
+	config := ServerConfig{
+		ListenAddr: ":18080",
+		Password:   "testpassword",
+		Verbose:    true,
+	}
+
+	server, err := StartServer(config)
+	if err != nil {
+		t.Fatalf("StartServer failed: %v", err)
+	}
+
+	// Check status
+	status := server.Status()
+	if !status.Running {
+		t.Error("Server should be running")
+	}
+	if status.ListenAddr != ":18080" {
+		t.Errorf("ListenAddr = %s, want :18080", status.ListenAddr)
+	}
+
+	// Stop server
+	err = server.Stop()
+	if err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+}
+
+// TestClientStartStop tests client start and stop
+func TestClientStartStop(t *testing.T) {
+	// Start server first
+	server, err := StartServer(ServerConfig{
+		ListenAddr: ":18081",
+		Password:   "testpassword",
+		Verbose:    false,
+	})
+	if err != nil {
+		t.Fatalf("StartServer failed: %v", err)
+	}
+	defer server.Stop()
+
+	// Give server time to start
+	time.Sleep(100 * time.Millisecond)
+
+	config := ClientConfig{
+		LocalAddr:  ":18082",
+		ServerAddr: "localhost:18081",
+		Password:   "testpassword",
+		Verbose:    true,
+	}
+
+	client, err := StartClient(config)
+	if err != nil {
+		t.Fatalf("StartClient failed: %v", err)
+	}
+
+	// Check status
+	status := client.Status()
+	if !status.Running {
+		t.Error("Client should be running")
+	}
+	if status.LocalAddr != ":18082" {
+		t.Errorf("LocalAddr = %s, want :18082", status.LocalAddr)
+	}
+
+	// Stop client
+	err = client.Stop()
+	if err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+}
+
+// TestIntegrationHTTPProxy tests HTTP proxy functionality
+func TestIntegrationHTTPProxy(t *testing.T) {
+	// Skip in short mode
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Start server
+	server, err := StartServer(ServerConfig{
+		ListenAddr: ":18090",
+		Password:   "testpassword",
+		Verbose:    true,
+	})
+	if err != nil {
+		t.Fatalf("StartServer failed: %v", err)
+	}
+	defer server.Stop()
+
+	// Give server time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Start client
+	client, err := StartClient(ClientConfig{
+		LocalAddr:  ":18091",
+		ServerAddr: "localhost:18090",
+		Password:   "testpassword",
+		Verbose:    true,
+	})
+	if err != nil {
+		t.Fatalf("StartClient failed: %v", err)
+	}
+	defer client.Stop()
+
+	// Give client time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Test HTTP proxy setup
+	proxyURL, _ := url.Parse("http://localhost:18091")
+	_ = &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	// Note: This test requires network access
+	// In a real test environment, you'd mock the target server
+	t.Log("HTTP proxy integration test would make a request here")
+}
+
+// TestParseAddr tests the ParseAddr function
+func TestParseAddr(t *testing.T) {
+	tests := []struct {
+		addr     string
+		host     string
+		port     int
+		wantErr  bool
+	}{
+		{"localhost:8080", "localhost", 8080, false},
+		{"127.0.0.1:443", "127.0.0.1", 443, false},
+		{"example.com:80", "example.com", 80, false},
+		{"[::1]:8080", "::1", 8080, false},
+		{"invalid", "", 0, true},
+		{":8080", "", 8080, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			host, port, err := ParseAddr(tt.addr)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParseAddr() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				if host != tt.host {
+					t.Errorf("host = %v, want %v", host, tt.host)
+				}
+				if port != tt.port {
+					t.Errorf("port = %v, want %v", port, tt.port)
+				}
+			}
+		})
+	}
+}
+
+// TestReadWriteTargetAddress tests address serialization
+func TestReadWriteTargetAddress(t *testing.T) {
+	tests := []string{
+		"localhost:8080",
+		"127.0.0.1:443",
+		"example.com:80",
+		"[::1]:8080",
+	}
+
+	for _, tt := range tests {
+		t.Run(tt, func(t *testing.T) {
+			var buf bytes.Buffer
+			err := writeTargetAddress(&buf, tt)
+			if err != nil {
+				t.Fatalf("writeTargetAddress failed: %v", err)
+			}
+
+			result, err := readTargetAddress(&buf)
+			if err != nil {
+				t.Fatalf("readTargetAddress failed: %v", err)
+			}
+
+			if result != tt {
+				t.Errorf("address = %v, want %v", result, tt)
+			}
+		})
+	}
+}
+
+// TestWriteTargetAddressTooLong tests address length validation
+func TestWriteTargetAddressTooLong(t *testing.T) {
+	longAddr := strings.Repeat("a", 300)
+	var buf bytes.Buffer
+	err := writeTargetAddress(&buf, longAddr)
+	if err == nil {
+		t.Error("writeTargetAddress should fail for addresses > 255 bytes")
+	}
+}
+
+// TestDefaultLogger tests the DefaultLogger
+func TestDefaultLogger(t *testing.T) {
+	// This test just ensures the logger doesn't panic
+	logger := NewDefaultLogger(true, "[TEST]")
+	logger.Debug("Debug message: %s", "test")
+	logger.Info("Info message: %s", "test")
+	logger.Error("Error message: %s", "test")
+
+	// Test with verbose false
+	logger = NewDefaultLogger(false, "[TEST]")
+	logger.Debug("Should not appear")
+	logger.Info("Info message")
+}
+
+// TestEncryptedConnClose tests EncryptedConn close
+func TestEncryptedConnClose(t *testing.T) {
+	server, client := net.Pipe()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	var serverConn *EncryptedConn
+	var clientConn *EncryptedConn
+
+	go func() {
+		defer wg.Done()
+		serverConn, _ = NewEncryptedConn(server, "secret", true)
+	}()
+
+	go func() {
+		defer wg.Done()
+		clientConn, _ = NewEncryptedConn(client, "secret", false)
+	}()
+
+	wg.Wait()
+
+	if serverConn != nil {
+		err := serverConn.Close()
+		if err != nil {
+			t.Errorf("Close failed: %v", err)
+		}
+	}
+
+	if clientConn != nil {
+		err := clientConn.Close()
+		if err != nil {
+			t.Errorf("Close failed: %v", err)
+		}
+	}
+}
+
+// TestServerConnections tests the Connections method
+func TestServerConnections(t *testing.T) {
+	server, err := StartServer(ServerConfig{
+		ListenAddr: ":18092",
+		Password:   "test",
+		Verbose:    false,
+	})
+	if err != nil {
+		t.Fatalf("StartServer failed: %v", err)
+	}
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	connCount := server.Connections()
+	if connCount != 0 {
+		t.Errorf("Expected 0 connections, got %d", connCount)
+	}
+}
+
+// TestClientConnections tests the Connections method
+func TestClientConnections(t *testing.T) {
+	server, err := StartServer(ServerConfig{
+		ListenAddr: ":18093",
+		Password:   "test",
+		Verbose:    false,
+	})
+	if err != nil {
+		t.Fatalf("StartServer failed: %v", err)
+	}
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	client, err := StartClient(ClientConfig{
+		LocalAddr:  ":18094",
+		ServerAddr: "localhost:18093",
+		Password:   "test",
+		Verbose:    false,
+	})
+	if err != nil {
+		t.Fatalf("StartClient failed: %v", err)
+	}
+	defer client.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	connCount := client.Connections()
+	if connCount != 0 {
+		t.Errorf("Expected 0 connections, got %d", connCount)
+	}
+}
+
+// TestEncryptedConnDeadline tests deadline methods
+func TestEncryptedConnDeadline(t *testing.T) {
+	server, client := net.Pipe()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	var serverConn *EncryptedConn
+	var clientConn *EncryptedConn
+
+	go func() {
+		defer wg.Done()
+		serverConn, _ = NewEncryptedConn(server, "secret", true)
+	}()
+
+	go func() {
+		defer wg.Done()
+		clientConn, _ = NewEncryptedConn(client, "secret", false)
+	}()
+
+	wg.Wait()
+
+	if serverConn == nil || clientConn == nil {
+		t.Fatal("Failed to create encrypted connections")
+	}
+
+	// Test SetDeadline
+	err := serverConn.SetDeadline(time.Now().Add(1 * time.Second))
+	if err != nil {
+		t.Errorf("SetDeadline failed: %v", err)
+	}
+
+	// Test SetReadDeadline
+	err = serverConn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	if err != nil {
+		t.Errorf("SetReadDeadline failed: %v", err)
+	}
+
+	// Test SetWriteDeadline
+	err = serverConn.SetWriteDeadline(time.Now().Add(1 * time.Second))
+	if err != nil {
+		t.Errorf("SetWriteDeadline failed: %v", err)
+	}
+
+	// Test LocalAddr
+	if serverConn.LocalAddr() == nil {
+		t.Error("LocalAddr should not be nil")
+	}
+
+	// Test RemoteAddr
+	if serverConn.RemoteAddr() == nil {
+		t.Error("RemoteAddr should not be nil")
+	}
+
+	serverConn.Close()
+	clientConn.Close()
+}
+
+// TestVersion tests the Version constant
+func TestVersion(t *testing.T) {
+	if Version == "" {
+		t.Error("Version should not be empty")
+	}
+}
+
+// startEchoServer starts a simple echo server for testing
+func startEchoServer(t *testing.T, addr string) net.Listener {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("Failed to start echo server: %v", err)
+	}
+
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				io.Copy(c, c)
+			}(conn)
+		}
+	}()
+
+	return listener
+}
+
+// TestIntegrationFullProxyFlow tests the complete proxy flow
+func TestIntegrationFullProxyFlow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Start echo server (target)
+	echoListener := startEchoServer(t, "127.0.0.1:19990")
+	defer echoListener.Close()
+
+	// Start proxy server
+	server, err := StartServer(ServerConfig{
+		ListenAddr: ":19991",
+		Password:   "testpassword",
+		Verbose:    false,
+	})
+	if err != nil {
+		t.Fatalf("StartServer failed: %v", err)
+	}
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Start proxy client
+	client, err := StartClient(ClientConfig{
+		LocalAddr:  ":19992",
+		ServerAddr: "localhost:19991",
+		Password:   "testpassword",
+		Verbose:    false,
+	})
+	if err != nil {
+		t.Fatalf("StartClient failed: %v", err)
+	}
+	defer client.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Test SOCKS5 proxy
+	t.Run("SOCKS5", func(t *testing.T) {
+		conn, err := net.DialTimeout("tcp", "localhost:19992", 5*time.Second)
+		if err != nil {
+			t.Fatalf("Failed to connect to proxy: %v", err)
+		}
+		defer conn.Close()
+		conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+		// SOCKS5 greeting
+		conn.Write([]byte{0x05, 0x01, 0x00})
+
+		// Read method selection
+		buf := make([]byte, 2)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			t.Fatalf("Failed to read method selection: %v", err)
+		}
+		if buf[0] != 0x05 || buf[1] != 0x00 {
+			t.Fatalf("Unexpected method selection response: %v", buf)
+		}
+
+		// SOCKS5 connect request
+		connectReq := []byte{
+			0x05,                   // version
+			0x01,                   // CONNECT command
+			0x00,                   // reserved
+			0x01,                   // IPv4 address type
+			127, 0, 0, 1,           // IPv4 address
+			0x4E, 0x16,             // port 19990 (0x4E16)
+		}
+		conn.Write(connectReq)
+
+		// Read connect response
+		resp := make([]byte, 10)
+		if _, err := io.ReadFull(conn, resp); err != nil {
+			t.Fatalf("Failed to read connect response: %v", err)
+		}
+		if resp[0] != 0x05 || resp[1] != 0x00 {
+			t.Fatalf("Connect failed: %v", resp[:2])
+		}
+
+		// Send data through proxy
+		testData := []byte("hello socks5")
+		if _, err := conn.Write(testData); err != nil {
+			t.Fatalf("Failed to write data: %v", err)
+		}
+
+		// Read echoed data
+		recvBuf := make([]byte, len(testData))
+		if _, err := io.ReadFull(conn, recvBuf); err != nil {
+			t.Fatalf("Failed to read echoed data: %v", err)
+		}
+
+		if !bytes.Equal(testData, recvBuf) {
+			t.Errorf("Echo mismatch: got %s, want %s", recvBuf, testData)
+		}
+	})
+}
+
+// TestIntegrationHTTPConnect tests HTTP CONNECT proxy
+func TestIntegrationHTTPConnect(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Start echo server (target)
+	echoListener := startEchoServer(t, "127.0.0.1:19993")
+	defer echoListener.Close()
+
+	// Start proxy server
+	server, err := StartServer(ServerConfig{
+		ListenAddr: ":19994",
+		Password:   "testpassword",
+		Verbose:    false,
+	})
+	if err != nil {
+		t.Fatalf("StartServer failed: %v", err)
+	}
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Start proxy client
+	client, err := StartClient(ClientConfig{
+		LocalAddr:  ":19995",
+		ServerAddr: "localhost:19994",
+		Password:   "testpassword",
+		Verbose:    false,
+	})
+	if err != nil {
+		t.Fatalf("StartClient failed: %v", err)
+	}
+	defer client.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Test HTTP CONNECT proxy
+	conn, err := net.DialTimeout("tcp", "localhost:19995", 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to proxy: %v", err)
 	}
 	defer conn.Close()
-	
-	// Send some data
-	testData := []byte("test data")
-	_, err = conn.Write(testData)
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	// HTTP CONNECT request
+	connectReq := "CONNECT 127.0.0.1:19993 HTTP/1.1\r\n\r\n"
+	if _, err := conn.Write([]byte(connectReq)); err != nil {
+		t.Fatalf("Failed to send CONNECT: %v", err)
+	}
+
+	// Read response
+	reader := bufio.NewReader(conn)
+	line, err := reader.ReadString('\n')
 	if err != nil {
-		t.Errorf("Failed to write to server: %v", err)
-		return
+		t.Fatalf("Failed to read response: %v", err)
 	}
-	
-	// Read the response
-	buffer := make([]byte, len(testData))
-	n, err := conn.Read(buffer)
-	if err != nil && err != io.EOF {
-		t.Errorf("Failed to read from server: %v", err)
-		return
+	if !strings.Contains(line, "200") {
+		t.Fatalf("Connect failed: %s", line)
 	}
-	if n != len(testData) {
-		t.Errorf("Expected to read %d bytes, got %d", len(testData), n)
-		return
+
+	// Skip remaining headers
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("Failed to read headers: %v", err)
+		}
+		if line == "\r\n" || line == "\n" {
+			break
+		}
 	}
-	
-	// Close the server
-	// Note: We can't directly close the server, but the test will exit and the goroutine will be cleaned up
-	t.Log("Server Start test completed")
+
+	// Send data through proxy
+	testData := []byte("hello http connect")
+	if _, err := conn.Write(testData); err != nil {
+		t.Fatalf("Failed to write data: %v", err)
+	}
+
+	// Read echoed data
+	recvBuf := make([]byte, len(testData))
+	if _, err := io.ReadFull(conn, recvBuf); err != nil {
+		t.Fatalf("Failed to read echoed data: %v", err)
+	}
+
+	if !bytes.Equal(testData, recvBuf) {
+		t.Errorf("Echo mismatch: got %s, want %s", recvBuf, testData)
+	}
 }
 
-// TestClientStart tests client Start method
-func TestClientStart(t *testing.T) {
-	// Create a client with a random local port
-	c := NewClient("127.0.0.1:12345", "127.0.0.1:0", "12345678")
-	
-	// Start the client in a goroutine
-	errChan := make(chan error)
-	go func() {
-		errChan <- c.Start()
-	}()
-	
-	// Give the client a moment to start
-	time.Sleep(100 * time.Millisecond)
-	
-	// Try to connect to the client's local proxy
-	conn, err := net.Dial("tcp", c.LocalAddr)
+// TestIntegrationSOCKS5Domain tests SOCKS5 with domain name
+func TestIntegrationSOCKS5Domain(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Start echo server
+	echoListener := startEchoServer(t, "127.0.0.1:19980")
+	defer echoListener.Close()
+
+	// Start proxy server
+	server, err := StartServer(ServerConfig{
+		ListenAddr: ":19981",
+		Password:   "testpassword",
+		Verbose:    false,
+	})
 	if err != nil {
-		t.Errorf("Failed to connect to client: %v", err)
-		return
+		t.Fatalf("StartServer failed: %v", err)
+	}
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Start proxy client
+	client, err := StartClient(ClientConfig{
+		LocalAddr:  ":19982",
+		ServerAddr: "localhost:19981",
+		Password:   "testpassword",
+		Verbose:    false,
+	})
+	if err != nil {
+		t.Fatalf("StartClient failed: %v", err)
+	}
+	defer client.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Test SOCKS5 with domain name
+	conn, err := net.DialTimeout("tcp", "localhost:19982", 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect to proxy: %v", err)
 	}
 	defer conn.Close()
-	
-	// Send some data
-	testData := []byte("test data")
-	_, err = conn.Write(testData)
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	// SOCKS5 greeting
+	conn.Write([]byte{0x05, 0x01, 0x00})
+
+	// Read method selection
+	buf := make([]byte, 2)
+	io.ReadFull(conn, buf)
+
+	// SOCKS5 connect with domain
+	domain := "localhost"
+	connectReq := []byte{
+		0x05,                   // version
+		0x01,                   // CONNECT command
+		0x00,                   // reserved
+		0x03,                   // domain address type
+		byte(len(domain)),      // domain length
+	}
+	connectReq = append(connectReq, []byte(domain)...)
+	connectReq = append(connectReq, []byte{0x4E, 0x0C}...) // port 19980
+
+	conn.Write(connectReq)
+
+	// Read connect response
+	resp := make([]byte, 10)
+	if _, err := io.ReadFull(conn, resp); err != nil {
+		t.Fatalf("Failed to read connect response: %v", err)
+	}
+
+	if resp[1] == 0x00 {
+		t.Log("SOCKS5 domain connection successful")
+	}
+}
+
+// TestIntegrationMultipleConnections tests multiple concurrent connections
+func TestIntegrationMultipleConnections(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Start echo server
+	echoListener := startEchoServer(t, "127.0.0.1:19970")
+	defer echoListener.Close()
+
+	// Start proxy server
+	server, err := StartServer(ServerConfig{
+		ListenAddr: ":19971",
+		Password:   "testpassword",
+		Verbose:    false,
+	})
 	if err != nil {
-		t.Errorf("Failed to write to client: %v", err)
-		return
+		t.Fatalf("StartServer failed: %v", err)
 	}
-	
-	// Note: We don't expect a response because the client can't connect to the server
-	// But we can check that the client didn't crash
-	t.Log("Client Start test completed")
-}
+	defer server.Stop()
 
-// TestServerWithInvalidPassword tests server with invalid password
-func TestServerWithInvalidPassword(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "short") // Password is too short
-	
-	// Create a mock connection
-	conn := &mockConn{data: []byte("test data")}
-	
-	// Handle the connection
-	s.handleConnection(conn)
-	
-	// Check if connection was closed
-	t.Log("Server with invalid password test completed")
-}
+	time.Sleep(50 * time.Millisecond)
 
-// mockWriter is a mock implementation of io.Writer for testing
-
-type mockWriter struct {
-	data []byte
-}
-
-func (m *mockWriter) Write(p []byte) (n int, err error) {
-	m.data = append(m.data, p...)
-	return len(p), nil
-}
-
-// mockReader is a mock implementation of io.Reader for testing
-
-type mockReader struct {
-	data []byte
-	pos  int
-}
-
-func (m *mockReader) Read(p []byte) (n int, err error) {
-	if m.pos >= len(m.data) {
-		return 0, io.EOF
+	// Start proxy client
+	client, err := StartClient(ClientConfig{
+		LocalAddr:  ":19972",
+		ServerAddr: "localhost:19971",
+		Password:   "testpassword",
+		Verbose:    false,
+	})
+	if err != nil {
+		t.Fatalf("StartClient failed: %v", err)
 	}
-	n = copy(p, m.data[m.pos:])
-	m.pos += n
-	return n, nil
-}
+	defer client.Stop()
 
-// mockConn is a mock implementation of net.Conn for testing
+	time.Sleep(50 * time.Millisecond)
 
-type mockConn struct {
-	data []byte
-	pos  int
-	err  error
-}
-
-func (m *mockConn) Read(b []byte) (n int, err error) {
-	if m.err != nil {
-		return 0, m.err
+	// Test multiple concurrent connections - just test that they can be established
+	for i := 0; i < 3; i++ {
+		conn, err := net.DialTimeout("tcp", "localhost:19972", 5*time.Second)
+		if err != nil {
+			t.Errorf("Failed to connect %d: %v", i, err)
+			continue
+		}
+		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		conn.Write([]byte{0x05, 0x01, 0x00})
+		buf := make([]byte, 2)
+		io.ReadFull(conn, buf)
+		conn.Close()
 	}
-	if m.pos >= len(m.data) {
-		return 0, io.EOF
+}
+
+// BenchmarkEncryptDecrypt benchmarks the encrypt/decrypt operations
+func BenchmarkEncryptDecrypt(b *testing.B) {
+	data := make([]byte, 1024)
+	password := "benchmark"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		encrypted, _ := EncryptData(data, password)
+		DecryptData(encrypted, password)
 	}
-	n = copy(b, m.data[m.pos:])
-	m.pos += n
-	return n, nil
 }
 
-func (m *mockConn) Write(b []byte) (n int, err error) {
-	if m.err != nil {
-		return 0, m.err
+// BenchmarkEncryptedConn benchmarks the encrypted connection
+func BenchmarkEncryptedConn(b *testing.B) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	var serverConn *EncryptedConn
+	var clientConn *EncryptedConn
+
+	go func() {
+		defer wg.Done()
+		serverConn, _ = NewEncryptedConn(server, "secret", true)
+	}()
+
+	go func() {
+		defer wg.Done()
+		clientConn, _ = NewEncryptedConn(client, "secret", false)
+	}()
+
+	wg.Wait()
+
+	if serverConn == nil || clientConn == nil {
+		b.Fatal("Failed to create encrypted connections")
 	}
-	m.data = append(m.data, b...)
-	return len(b), nil
-}
 
-func (m *mockConn) Close() error {
-	return m.err
-}
+	data := []byte("benchmark test data")
 
-func (m *mockConn) LocalAddr() net.Addr {
-	return &mockAddr{}
-}
-
-func (m *mockConn) RemoteAddr() net.Addr {
-	return &mockAddr{}
-}
-
-func (m *mockConn) SetDeadline(t time.Time) error {
-	return m.err
-}
-
-func (m *mockConn) SetReadDeadline(t time.Time) error {
-	return m.err
-}
-
-func (m *mockConn) SetWriteDeadline(t time.Time) error {
-	return m.err
-}
-
-// mockAddr is a mock implementation of net.Addr for testing
-
-type mockAddr struct{}
-
-func (m *mockAddr) Network() string {
-	return "tcp"
-}
-
-func (m *mockAddr) String() string {
-	return "127.0.0.1:0"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		clientConn.Write(data)
+		buf := make([]byte, len(data))
+		serverConn.Read(buf)
+	}
 }

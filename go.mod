@@ -1,3 +1,3 @@
-module github.com/topxeq/goconnectit
+module goconnectit
 
-go 1.20
+go 1.21
