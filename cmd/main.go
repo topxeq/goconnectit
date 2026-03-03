@@ -87,13 +87,7 @@ func main() {
 }
 
 func runServer(listenAddr, password string, verbose bool) {
-	config := goconnectit.ServerConfig{
-		ListenAddr: listenAddr,
-		Password:   password,
-		Verbose:    verbose,
-	}
-
-	server, err := goconnectit.StartServer(config)
+	server, err := goconnectit.StartServer(listenAddr, password, verbose)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
 		os.Exit(1)
@@ -107,14 +101,7 @@ func runServer(listenAddr, password string, verbose bool) {
 }
 
 func runClient(localAddr, serverAddr, password string, verbose bool) {
-	config := goconnectit.ClientConfig{
-		LocalAddr:  localAddr,
-		ServerAddr: serverAddr,
-		Password:   password,
-		Verbose:    verbose,
-	}
-
-	client, err := goconnectit.StartClient(config)
+	client, err := goconnectit.StartClient(localAddr, serverAddr, password, verbose)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting client: %v\n", err)
 		os.Exit(1)

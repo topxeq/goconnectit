@@ -5,8 +5,6 @@ import (
 	"bytes"
 	"io"
 	"net"
-	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -162,29 +160,26 @@ func TestEncryptedConn(t *testing.T) {
 // TestServerConfigValidation tests server configuration validation
 func TestServerConfigValidation(t *testing.T) {
 	tests := []struct {
-		name    string
-		config  ServerConfig
-		wantErr bool
+		name       string
+		listenAddr string
+		password   string
+		verbose    bool
+		wantErr    bool
 	}{
-		{"valid", ServerConfig{ListenAddr: ":8080", Password: "secret"}, false},
-		{"no address", ServerConfig{Password: "secret"}, true},
-		{"no password", ServerConfig{ListenAddr: ":8080"}, true},
-		{"empty", ServerConfig{}, true},
+		{"valid", ":8080", "secret", false, false},
+		{"no address", "", "secret", false, true},
+		{"no password", ":8080", "", false, true},
+		{"empty", "", "", false, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := StartServer(tt.config)
+			server, err := StartServer(tt.listenAddr, tt.password, tt.verbose)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("StartServer() error = %v, wantErr %v", err, tt.wantErr)
 			}
-			if err == nil {
-				// Clean up
-				tt.config.Logger = NewDefaultLogger(false, "")
-				server, _ := StartServer(tt.config)
-				if server != nil {
-					server.Stop()
-				}
+			if server != nil {
+				server.Stop()
 			}
 		})
 	}
@@ -193,15 +188,18 @@ func TestServerConfigValidation(t *testing.T) {
 // TestClientConfigValidation tests client configuration validation
 func TestClientConfigValidation(t *testing.T) {
 	tests := []struct {
-		name    string
-		config  ClientConfig
-		wantErr bool
+		name       string
+		localAddr  string
+		serverAddr string
+		password   string
+		verbose    bool
+		wantErr    bool
 	}{
-		{"valid", ClientConfig{LocalAddr: ":18888", ServerAddr: "localhost:8443", Password: "secret"}, false},
-		{"no local address", ClientConfig{ServerAddr: "localhost:8443", Password: "secret"}, true},
-		{"no server address", ClientConfig{LocalAddr: ":18888", Password: "secret"}, true},
-		{"no password", ClientConfig{LocalAddr: ":18888", ServerAddr: "localhost:8443"}, true},
-		{"empty", ClientConfig{}, true},
+		{"valid", ":18888", "localhost:18889", "secret", false, false},
+		{"no local address", "", "localhost:8443", "secret", false, true},
+		{"no server address", ":18888", "", "secret", false, true},
+		{"no password", ":18888", "localhost:8443", "", false, true},
+		{"empty", "", "", "", false, true},
 	}
 
 	for _, tt := range tests {
@@ -209,20 +207,13 @@ func TestClientConfigValidation(t *testing.T) {
 			// We need to actually test with a running server for valid cases
 			if !tt.wantErr {
 				// Start a server first
-				server, err := StartServer(ServerConfig{
-					ListenAddr: ":18889",
-					Password:   "secret",
-					Verbose:    false,
-				})
+				server, err := StartServer(":18889", "secret", false)
 				if err != nil {
 					t.Fatalf("Failed to start server: %v", err)
 				}
 				defer server.Stop()
 
-				// Update config to point to test server
-				tt.config.ServerAddr = "localhost:18889"
-
-				client, err := StartClient(tt.config)
+				client, err := StartClient(tt.localAddr, tt.serverAddr, tt.password, tt.verbose)
 				if (err != nil) != tt.wantErr {
 					t.Errorf("StartClient() error = %v, wantErr %v", err, tt.wantErr)
 				}
@@ -230,7 +221,7 @@ func TestClientConfigValidation(t *testing.T) {
 					client.Stop()
 				}
 			} else {
-				_, err := StartClient(tt.config)
+				_, err := StartClient(tt.localAddr, tt.serverAddr, tt.password, tt.verbose)
 				if (err != nil) != tt.wantErr {
 					t.Errorf("StartClient() error = %v, wantErr %v", err, tt.wantErr)
 				}
@@ -241,13 +232,7 @@ func TestClientConfigValidation(t *testing.T) {
 
 // TestServerStartStop tests server start and stop
 func TestServerStartStop(t *testing.T) {
-	config := ServerConfig{
-		ListenAddr: ":18080",
-		Password:   "testpassword",
-		Verbose:    true,
-	}
-
-	server, err := StartServer(config)
+	server, err := StartServer(":18080", "testpassword", true)
 	if err != nil {
 		t.Fatalf("StartServer failed: %v", err)
 	}
@@ -271,11 +256,7 @@ func TestServerStartStop(t *testing.T) {
 // TestClientStartStop tests client start and stop
 func TestClientStartStop(t *testing.T) {
 	// Start server first
-	server, err := StartServer(ServerConfig{
-		ListenAddr: ":18081",
-		Password:   "testpassword",
-		Verbose:    false,
-	})
+	server, err := StartServer(":18081", "testpassword", false)
 	if err != nil {
 		t.Fatalf("StartServer failed: %v", err)
 	}
@@ -284,14 +265,7 @@ func TestClientStartStop(t *testing.T) {
 	// Give server time to start
 	time.Sleep(100 * time.Millisecond)
 
-	config := ClientConfig{
-		LocalAddr:  ":18082",
-		ServerAddr: "localhost:18081",
-		Password:   "testpassword",
-		Verbose:    true,
-	}
-
-	client, err := StartClient(config)
+	client, err := StartClient(":18082", "localhost:18081", "testpassword", true)
 	if err != nil {
 		t.Fatalf("StartClient failed: %v", err)
 	}
@@ -320,11 +294,7 @@ func TestIntegrationHTTPProxy(t *testing.T) {
 	}
 
 	// Start server
-	server, err := StartServer(ServerConfig{
-		ListenAddr: ":18090",
-		Password:   "testpassword",
-		Verbose:    true,
-	})
+	server, err := StartServer(":18090", "testpassword", true)
 	if err != nil {
 		t.Fatalf("StartServer failed: %v", err)
 	}
@@ -334,12 +304,7 @@ func TestIntegrationHTTPProxy(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Start client
-	client, err := StartClient(ClientConfig{
-		LocalAddr:  ":18091",
-		ServerAddr: "localhost:18090",
-		Password:   "testpassword",
-		Verbose:    true,
-	})
+	client, err := StartClient(":18091", "localhost:18090", "testpassword", true)
 	if err != nil {
 		t.Fatalf("StartClient failed: %v", err)
 	}
@@ -348,27 +313,16 @@ func TestIntegrationHTTPProxy(t *testing.T) {
 	// Give client time to start
 	time.Sleep(100 * time.Millisecond)
 
-	// Test HTTP proxy setup
-	proxyURL, _ := url.Parse("http://localhost:18091")
-	_ = &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-		},
-		Timeout: 5 * time.Second,
-	}
-
-	// Note: This test requires network access
-	// In a real test environment, you'd mock the target server
 	t.Log("HTTP proxy integration test would make a request here")
 }
 
 // TestParseAddr tests the ParseAddr function
 func TestParseAddr(t *testing.T) {
 	tests := []struct {
-		addr     string
-		host     string
-		port     int
-		wantErr  bool
+		addr    string
+		host    string
+		port    int
+		wantErr bool
 	}{
 		{"localhost:8080", "localhost", 8080, false},
 		{"127.0.0.1:443", "127.0.0.1", 443, false},
@@ -489,11 +443,7 @@ func TestEncryptedConnClose(t *testing.T) {
 
 // TestServerConnections tests the Connections method
 func TestServerConnections(t *testing.T) {
-	server, err := StartServer(ServerConfig{
-		ListenAddr: ":18092",
-		Password:   "test",
-		Verbose:    false,
-	})
+	server, err := StartServer(":18092", "test", false)
 	if err != nil {
 		t.Fatalf("StartServer failed: %v", err)
 	}
@@ -509,11 +459,7 @@ func TestServerConnections(t *testing.T) {
 
 // TestClientConnections tests the Connections method
 func TestClientConnections(t *testing.T) {
-	server, err := StartServer(ServerConfig{
-		ListenAddr: ":18093",
-		Password:   "test",
-		Verbose:    false,
-	})
+	server, err := StartServer(":18093", "test", false)
 	if err != nil {
 		t.Fatalf("StartServer failed: %v", err)
 	}
@@ -521,12 +467,7 @@ func TestClientConnections(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	client, err := StartClient(ClientConfig{
-		LocalAddr:  ":18094",
-		ServerAddr: "localhost:18093",
-		Password:   "test",
-		Verbose:    false,
-	})
+	client, err := StartClient(":18094", "localhost:18093", "test", false)
 	if err != nil {
 		t.Fatalf("StartClient failed: %v", err)
 	}
@@ -639,11 +580,7 @@ func TestIntegrationFullProxyFlow(t *testing.T) {
 	defer echoListener.Close()
 
 	// Start proxy server
-	server, err := StartServer(ServerConfig{
-		ListenAddr: ":19991",
-		Password:   "testpassword",
-		Verbose:    false,
-	})
+	server, err := StartServer(":19991", "testpassword", false)
 	if err != nil {
 		t.Fatalf("StartServer failed: %v", err)
 	}
@@ -652,12 +589,7 @@ func TestIntegrationFullProxyFlow(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Start proxy client
-	client, err := StartClient(ClientConfig{
-		LocalAddr:  ":19992",
-		ServerAddr: "localhost:19991",
-		Password:   "testpassword",
-		Verbose:    false,
-	})
+	client, err := StartClient(":19992", "localhost:19991", "testpassword", false)
 	if err != nil {
 		t.Fatalf("StartClient failed: %v", err)
 	}
@@ -735,11 +667,7 @@ func TestIntegrationHTTPConnect(t *testing.T) {
 	defer echoListener.Close()
 
 	// Start proxy server
-	server, err := StartServer(ServerConfig{
-		ListenAddr: ":19994",
-		Password:   "testpassword",
-		Verbose:    false,
-	})
+	server, err := StartServer(":19994", "testpassword", false)
 	if err != nil {
 		t.Fatalf("StartServer failed: %v", err)
 	}
@@ -748,12 +676,7 @@ func TestIntegrationHTTPConnect(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Start proxy client
-	client, err := StartClient(ClientConfig{
-		LocalAddr:  ":19995",
-		ServerAddr: "localhost:19994",
-		Password:   "testpassword",
-		Verbose:    false,
-	})
+	client, err := StartClient(":19995", "localhost:19994", "testpassword", false)
 	if err != nil {
 		t.Fatalf("StartClient failed: %v", err)
 	}
@@ -824,11 +747,7 @@ func TestIntegrationSOCKS5Domain(t *testing.T) {
 	defer echoListener.Close()
 
 	// Start proxy server
-	server, err := StartServer(ServerConfig{
-		ListenAddr: ":19981",
-		Password:   "testpassword",
-		Verbose:    false,
-	})
+	server, err := StartServer(":19981", "testpassword", false)
 	if err != nil {
 		t.Fatalf("StartServer failed: %v", err)
 	}
@@ -837,12 +756,7 @@ func TestIntegrationSOCKS5Domain(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Start proxy client
-	client, err := StartClient(ClientConfig{
-		LocalAddr:  ":19982",
-		ServerAddr: "localhost:19981",
-		Password:   "testpassword",
-		Verbose:    false,
-	})
+	client, err := StartClient(":19982", "localhost:19981", "testpassword", false)
 	if err != nil {
 		t.Fatalf("StartClient failed: %v", err)
 	}
@@ -901,11 +815,7 @@ func TestIntegrationMultipleConnections(t *testing.T) {
 	defer echoListener.Close()
 
 	// Start proxy server
-	server, err := StartServer(ServerConfig{
-		ListenAddr: ":19971",
-		Password:   "testpassword",
-		Verbose:    false,
-	})
+	server, err := StartServer(":19971", "testpassword", false)
 	if err != nil {
 		t.Fatalf("StartServer failed: %v", err)
 	}
@@ -914,12 +824,7 @@ func TestIntegrationMultipleConnections(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Start proxy client
-	client, err := StartClient(ClientConfig{
-		LocalAddr:  ":19972",
-		ServerAddr: "localhost:19971",
-		Password:   "testpassword",
-		Verbose:    false,
-	})
+	client, err := StartClient(":19972", "localhost:19971", "testpassword", false)
 	if err != nil {
 		t.Fatalf("StartClient failed: %v", err)
 	}

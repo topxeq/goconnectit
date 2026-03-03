@@ -74,23 +74,6 @@ func (l *DefaultLogger) Error(format string, args ...interface{}) {
 	l.log("ERROR", format, args...)
 }
 
-// ServerConfig holds server configuration
-type ServerConfig struct {
-	ListenAddr string // Address to listen on (e.g., ":8443")
-	Password   string // Encryption password
-	Verbose    bool   // Enable verbose logging
-	Logger     Logger // Custom logger (optional)
-}
-
-// ClientConfig holds client configuration
-type ClientConfig struct {
-	LocalAddr  string // Local proxy address (e.g., ":8080")
-	ServerAddr string // Remote server address
-	Password   string // Encryption password
-	Verbose    bool   // Enable verbose logging
-	Logger     Logger // Custom logger (optional)
-}
-
 // ServerStatus represents server status
 type ServerStatus struct {
 	Running     bool
@@ -110,19 +93,24 @@ type ClientStatus struct {
 
 // Server represents the proxy server
 type Server struct {
-	config     ServerConfig
-	listener   net.Listener
+	listenAddr  string
+	password    string
+	verbose     bool
+	listener    net.Listener
 	connections map[net.Conn]struct{}
-	connMutex  sync.RWMutex
-	stopChan   chan struct{}
-	wg         sync.WaitGroup
-	logger     Logger
-	startTime  time.Time
+	connMutex   sync.RWMutex
+	stopChan    chan struct{}
+	wg          sync.WaitGroup
+	logger      Logger
+	startTime   time.Time
 }
 
 // Client represents the proxy client
 type Client struct {
-	config      ClientConfig
+	localAddr   string
+	serverAddr  string
+	password    string
+	verbose     bool
 	listener    net.Listener
 	connections map[net.Conn]struct{}
 	connMutex   sync.RWMutex
@@ -247,26 +235,26 @@ func (ec *EncryptedConn) SetWriteDeadline(t time.Time) error {
 }
 
 // StartServer starts a new proxy server
-func StartServer(config ServerConfig) (*Server, error) {
-	if config.ListenAddr == "" {
+// Parameters: listenAddr (e.g., ":8443"), password (encryption key), verbose (enable debug logging)
+func StartServer(listenAddr, password string, verbose bool) (*Server, error) {
+	if listenAddr == "" {
 		return nil, fmt.Errorf("%w: listen address required", ErrInvalidConfig)
 	}
-	if config.Password == "" {
+	if password == "" {
 		return nil, fmt.Errorf("%w: password required", ErrInvalidConfig)
 	}
 
-	logger := config.Logger
-	if logger == nil {
-		logger = NewDefaultLogger(config.Verbose, "[SERVER]")
-	}
+	logger := NewDefaultLogger(verbose, "[SERVER]")
 
-	listener, err := net.Listen("tcp", config.ListenAddr)
+	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to listen on %s: %w", config.ListenAddr, err)
+		return nil, fmt.Errorf("failed to listen on %s: %w", listenAddr, err)
 	}
 
 	server := &Server{
-		config:      config,
+		listenAddr:  listenAddr,
+		password:    password,
+		verbose:     verbose,
 		listener:    listener,
 		connections: make(map[net.Conn]struct{}),
 		stopChan:    make(chan struct{}),
@@ -277,7 +265,7 @@ func StartServer(config ServerConfig) (*Server, error) {
 	server.wg.Add(1)
 	go server.acceptLoop()
 
-	logger.Info("Server started on %s", config.ListenAddr)
+	logger.Info("Server started on %s", listenAddr)
 	return server, nil
 }
 
@@ -313,7 +301,7 @@ func (s *Server) Status() ServerStatus {
 
 	return ServerStatus{
 		Running:     true,
-		ListenAddr:  s.config.ListenAddr,
+		ListenAddr:  s.listenAddr,
 		Connections: connCount,
 		StartTime:   s.startTime,
 	}
@@ -369,7 +357,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	s.logger.Debug("New connection from %s", conn.RemoteAddr())
 
 	// Create encrypted connection
-	encConn, err := NewEncryptedConn(conn, s.config.Password, true)
+	encConn, err := NewEncryptedConn(conn, s.password, true)
 	if err != nil {
 		s.logger.Error("Failed to create encrypted connection: %v", err)
 		return
@@ -383,7 +371,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 
 	// Verify password (simple XOR check)
-	expected := byte(len(s.config.Password) % 256)
+	expected := byte(len(s.password) % 256)
 	if handshake[0] != expected {
 		s.logger.Error("Invalid password from %s", conn.RemoteAddr())
 		return
@@ -444,29 +432,30 @@ func (s *Server) relay(encConn *EncryptedConn, targetConn net.Conn) {
 }
 
 // StartClient starts a new proxy client
-func StartClient(config ClientConfig) (*Client, error) {
-	if config.LocalAddr == "" {
+// Parameters: localAddr (e.g., ":8080"), serverAddr (e.g., "server:8443"), password (encryption key), verbose (enable debug logging)
+func StartClient(localAddr, serverAddr, password string, verbose bool) (*Client, error) {
+	if localAddr == "" {
 		return nil, fmt.Errorf("%w: local address required", ErrInvalidConfig)
 	}
-	if config.ServerAddr == "" {
+	if serverAddr == "" {
 		return nil, fmt.Errorf("%w: server address required", ErrInvalidConfig)
 	}
-	if config.Password == "" {
+	if password == "" {
 		return nil, fmt.Errorf("%w: password required", ErrInvalidConfig)
 	}
 
-	logger := config.Logger
-	if logger == nil {
-		logger = NewDefaultLogger(config.Verbose, "[CLIENT]")
-	}
+	logger := NewDefaultLogger(verbose, "[CLIENT]")
 
-	listener, err := net.Listen("tcp", config.LocalAddr)
+	listener, err := net.Listen("tcp", localAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to listen on %s: %w", config.LocalAddr, err)
+		return nil, fmt.Errorf("failed to listen on %s: %w", localAddr, err)
 	}
 
 	client := &Client{
-		config:      config,
+		localAddr:   localAddr,
+		serverAddr:  serverAddr,
+		password:    password,
+		verbose:     verbose,
 		listener:    listener,
 		connections: make(map[net.Conn]struct{}),
 		stopChan:    make(chan struct{}),
@@ -477,7 +466,7 @@ func StartClient(config ClientConfig) (*Client, error) {
 	client.wg.Add(1)
 	go client.acceptLoop()
 
-	logger.Info("Client started on %s, proxying to %s", config.LocalAddr, config.ServerAddr)
+	logger.Info("Client started on %s, proxying to %s", localAddr, serverAddr)
 	return client, nil
 }
 
@@ -513,8 +502,8 @@ func (c *Client) Status() ClientStatus {
 
 	return ClientStatus{
 		Running:     true,
-		LocalAddr:   c.config.LocalAddr,
-		ServerAddr:  c.config.ServerAddr,
+		LocalAddr:   c.localAddr,
+		ServerAddr:  c.serverAddr,
 		Connections: connCount,
 		StartTime:   c.startTime,
 	}
@@ -645,21 +634,21 @@ func (c *Client) handleHTTP(conn net.Conn, firstByte byte) {
 	}
 
 	// Connect to server and establish encrypted tunnel
-	serverConn, err := net.DialTimeout("tcp", c.config.ServerAddr, 10*time.Second)
+	serverConn, err := net.DialTimeout("tcp", c.serverAddr, 10*time.Second)
 	if err != nil {
 		c.logger.Error("Failed to connect to server: %v", err)
 		return
 	}
 	defer serverConn.Close()
 
-	encConn, err := NewEncryptedConn(serverConn, c.config.Password, false)
+	encConn, err := NewEncryptedConn(serverConn, c.password, false)
 	if err != nil {
 		c.logger.Error("Failed to create encrypted connection: %v", err)
 		return
 	}
 
 	// Send handshake
-	handshake := byte(len(c.config.Password) % 256)
+	handshake := byte(len(c.password) % 256)
 	if _, err := encConn.Write([]byte{handshake}); err != nil {
 		c.logger.Error("Failed to send handshake: %v", err)
 		return
@@ -730,7 +719,7 @@ func (c *Client) handleHTTP(conn net.Conn, firstByte byte) {
 		}
 	}
 
-	c.logger.Info("Proxying HTTP %s %s <-> %s", conn.RemoteAddr(), targetAddr, c.config.ServerAddr)
+	c.logger.Info("Proxying HTTP %s %s <-> %s", conn.RemoteAddr(), targetAddr, c.serverAddr)
 
 	// Relay data - need to use reader's buffered data for both CONNECT and plain HTTP
 	// because bufio.Reader may have already buffered some data from conn
@@ -858,7 +847,7 @@ func (c *Client) handleSOCKS5(conn net.Conn, firstByte byte) {
 	c.logger.Debug("SOCKS5 CONNECT to %s", targetAddr)
 
 	// Connect to server and establish encrypted tunnel
-	serverConn, err := net.DialTimeout("tcp", c.config.ServerAddr, 10*time.Second)
+	serverConn, err := net.DialTimeout("tcp", c.serverAddr, 10*time.Second)
 	if err != nil {
 		c.logger.Error("Failed to connect to server: %v", err)
 		conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0}) // General failure
@@ -866,7 +855,7 @@ func (c *Client) handleSOCKS5(conn net.Conn, firstByte byte) {
 	}
 	defer serverConn.Close()
 
-	encConn, err := NewEncryptedConn(serverConn, c.config.Password, false)
+	encConn, err := NewEncryptedConn(serverConn, c.password, false)
 	if err != nil {
 		c.logger.Error("Failed to create encrypted connection: %v", err)
 		conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
@@ -874,7 +863,7 @@ func (c *Client) handleSOCKS5(conn net.Conn, firstByte byte) {
 	}
 
 	// Send handshake
-	handshake := byte(len(c.config.Password) % 256)
+	handshake := byte(len(c.password) % 256)
 	if _, err := encConn.Write([]byte{handshake}); err != nil {
 		c.logger.Error("Failed to send handshake: %v", err)
 		conn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
