@@ -15,14 +15,14 @@ An encrypted TCP proxy service with HTTP/HTTPS/SOCKS5 support, written in Go.
 ### From Source
 
 ```bash
-git clone https://github.com/yourusername/goconnectit.git
+git clone https://github.com/topxeq/goconnectit.git
 cd goconnectit
 go build -o goconnectit ./cmd
 ```
 
 ### Pre-built Binaries
 
-Download from the [Releases](https://github.com/yourusername/goconnectit/releases) page.
+Download from the [Releases](https://github.com/topxeq/goconnectit/releases) page.
 
 ## Usage
 
@@ -99,29 +99,22 @@ You can use goconnectit as a library in your Go applications:
 package main
 
 import (
-    "goconnectit"
+    "fmt"
     "log"
+
+    "goconnectit"
 )
 
 func main() {
     // Start server
-    server, err := goconnectit.StartServer(goconnectit.ServerConfig{
-        ListenAddr: ":8443",
-        Password:   "secret",
-        Verbose:    true,
-    })
+    server, err := goconnectit.StartServer(":8443", "secret", true)
     if err != nil {
         log.Fatal(err)
     }
     defer server.Stop()
 
     // Start client
-    client, err := goconnectit.StartClient(goconnectit.ClientConfig{
-        LocalAddr:  ":8080",
-        ServerAddr: "localhost:8443",
-        Password:   "secret",
-        Verbose:    true,
-    })
+    client, err := goconnectit.StartClient(":8080", "localhost:8443", "secret", true)
     if err != nil {
         log.Fatal(err)
     }
@@ -129,8 +122,61 @@ func main() {
 
     // Check status
     status := client.Status()
-    log.Printf("Client running: %v", status.Running)
+    fmt.Printf("Client running: %v, Local: %s, Server: %s\n",
+        status.Running, status.LocalAddr, status.ServerAddr)
+
+    // Get connection count
+    conns := client.Connections()
+    fmt.Printf("Active connections: %d\n", conns)
 }
+```
+
+### API Reference
+
+**Server Functions:**
+```go
+// StartServer starts a new proxy server
+// listenAddr: address to listen on (e.g., ":8443")
+// password: encryption password
+// verbose: enable debug logging
+func StartServer(listenAddr, password string, verbose bool) (*Server, error)
+
+// Stop stops the server
+func (s *Server) Stop() error
+
+// Status returns the current server status
+func (s *Server) Status() ServerStatus
+
+// Connections returns the number of active connections
+func (s *Server) Connections() int
+```
+
+**Client Functions:**
+```go
+// StartClient starts a new proxy client
+// localAddr: local proxy address (e.g., ":8080")
+// serverAddr: remote server address (e.g., "server:8443")
+// password: encryption password
+// verbose: enable debug logging
+func StartClient(localAddr, serverAddr, password string, verbose bool) (*Client, error)
+
+// Stop stops the client
+func (c *Client) Stop() error
+
+// Status returns the current client status
+func (c *Client) Status() ClientStatus
+
+// Connections returns the number of active connections
+func (c *Client) Connections() int
+```
+
+**Utility Functions:**
+```go
+// EncryptData encrypts a byte slice using the password
+func EncryptData(data []byte, password string) ([]byte, error)
+
+// DecryptData decrypts a byte slice using the password
+func DecryptData(data []byte, password string) ([]byte, error)
 ```
 
 ## Architecture
@@ -202,27 +248,6 @@ GOOS=linux GOARCH=amd64 go build -o goconnectit-linux-amd64 ./cmd
 GOOS=darwin GOARCH=amd64 go build -o goconnectit-darwin-amd64 ./cmd
 GOOS=darwin GOARCH=arm64 go build -o goconnectit-darwin-arm64 ./cmd
 ```
-
-## Configuration
-
-### Server Configuration
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ListenAddr` | string | Address to listen on (e.g., `:8443`) |
-| `Password` | string | Encryption password |
-| `Verbose` | bool | Enable debug logging |
-| `Logger` | Logger | Custom logger interface |
-
-### Client Configuration
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `LocalAddr` | string | Local proxy address (e.g., `:8080`) |
-| `ServerAddr` | string | Remote server address |
-| `Password` | string | Encryption password |
-| `Verbose` | bool | Enable debug logging |
-| `Logger` | Logger | Custom logger interface |
 
 ## Security Considerations
 
