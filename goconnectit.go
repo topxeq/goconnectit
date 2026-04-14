@@ -10,11 +10,6 @@ import (
 	"time"
 )
 
-const EncryptMethodDES = "des"
-const EncryptMethodTXDEF = "txdef"
-const EncryptMethodTXDEE = "txdee"
-const EncryptMethodTXDE = "txde"
-
 type Server struct {
 	Addr          string
 	Password      string
@@ -475,13 +470,13 @@ type netConn interface {
 
 func createEncryptedStreams(encryptMethod, password string, conn net.Conn) (netConn, error) {
 	switch encryptMethod {
-	case EncryptMethodDES:
+	case "des":
 		return createDESStreams(password, conn)
-	case EncryptMethodTXDEF:
+	case "txdef":
 		return createTXDEFStreams(password, conn)
-	case EncryptMethodTXDEE:
+	case "txdee":
 		return createTXDEEStreams(password, conn)
-	case EncryptMethodTXDE:
+	case "txde":
 		return createTXDEStreams(password, conn)
 	default:
 		return nil, fmt.Errorf("unsupported encryption method: %s", encryptMethod)

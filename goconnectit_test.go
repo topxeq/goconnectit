@@ -14,7 +14,7 @@ func TestNewServer(t *testing.T) {
 	addr := "0.0.0.0:8888"
 	password := "12345678"
 	verbose := false
-	encryptMethod := EncryptMethodDES
+	encryptMethod := "des"
 	s := NewServer(addr, password, verbose, encryptMethod)
 	if s.Addr != addr {
 		t.Errorf("Expected server address to be %s, got %s", addr, s.Addr)
@@ -36,7 +36,7 @@ func TestNewClient(t *testing.T) {
 	localAddr := "127.0.0.1:1080"
 	password := "12345678"
 	verbose := false
-	encryptMethod := EncryptMethodDES
+	encryptMethod := "des"
 	c := NewClient(serverAddr, localAddr, password, verbose, encryptMethod)
 	if c.ServerAddr != serverAddr {
 		t.Errorf("Expected server address to be %s, got %s", serverAddr, c.ServerAddr)
@@ -57,7 +57,7 @@ func TestNewClient(t *testing.T) {
 
 // TestServerHandleConnectionWithValidData tests server handleConnection method with valid data
 func TestServerHandleConnectionWithValidData(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "12345678", false, EncryptMethodDES)
+	s := NewServer("127.0.0.1:8888", "12345678", false, "des")
 	
 	// Test with normal data
 	conn := &mockConn{data: []byte("test data")}
@@ -66,7 +66,7 @@ func TestServerHandleConnectionWithValidData(t *testing.T) {
 
 // TestServerHandleConnectionWithReadError tests server handleConnection method with read error
 func TestServerHandleConnectionWithReadError(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "12345678", false, EncryptMethodDES)
+	s := NewServer("127.0.0.1:8888", "12345678", false, "des")
 	
 	// Test with error in Read
 	errConn := &mockConn{err: io.EOF}
@@ -75,7 +75,7 @@ func TestServerHandleConnectionWithReadError(t *testing.T) {
 
 // TestServerHandleConnectionWithWriteError tests server handleConnection method with write error
 func TestServerHandleConnectionWithWriteError(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "12345678", false, EncryptMethodDES)
+	s := NewServer("127.0.0.1:8888", "12345678", false, "des")
 	
 	// Test with error in Write
 	writeErrConn := &mockConn{data: []byte("test data"), err: io.EOF}
@@ -84,7 +84,7 @@ func TestServerHandleConnectionWithWriteError(t *testing.T) {
 
 // TestServerHandleConnectionWithInvalidPassword tests server handleConnection method with invalid password
 func TestServerHandleConnectionWithInvalidPassword(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "short", false, EncryptMethodDES) // Password is too short
+	s := NewServer("127.0.0.1:8888", "short", false, "des") // Password is too short
 	
 	// Create a mock connection
 	conn := &mockConn{data: []byte("test data")}
@@ -125,7 +125,7 @@ func TestEncryption(t *testing.T) {
 
 // TestServerHandleConnection tests server handleConnection method
 func TestServerHandleConnection(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "12345678", false, EncryptMethodDES)
+	s := NewServer("127.0.0.1:8888", "12345678", false, "des")
 	
 	// Test with normal data
 	conn := &mockConn{data: []byte("test data")}
@@ -143,7 +143,7 @@ func TestServerHandleConnection(t *testing.T) {
 // TestServerStart tests server Start method
 func TestServerStart(t *testing.T) {
 	// Create a server with a random port
-	s := NewServer("127.0.0.1:0", "12345678", false, EncryptMethodDES)
+	s := NewServer("127.0.0.1:0", "12345678", false, "des")
 	
 	// Start the server in a goroutine
 	errChan := make(chan error)
@@ -186,7 +186,7 @@ func TestServerStart(t *testing.T) {
 // TestClientStart tests client Start method
 func TestClientStart(t *testing.T) {
 	// Create a client with a random local port
-	c := NewClient("127.0.0.1:12345", "127.0.0.1:0", "12345678", false, EncryptMethodDES)
+	c := NewClient("127.0.0.1:12345", "127.0.0.1:0", "12345678", false, "des")
 	
 	// Start the client in a goroutine
 	errChan := make(chan error)
@@ -220,7 +220,7 @@ func TestClientStart(t *testing.T) {
 
 // TestServerWithInvalidPassword tests server with invalid password
 func TestServerWithInvalidPassword(t *testing.T) {
-	s := NewServer("127.0.0.1:8888", "short", false, EncryptMethodDES) // Password is too short
+	s := NewServer("127.0.0.1:8888", "short", false, "des") // Password is too short
 	
 	// Create a mock connection
 	conn := &mockConn{data: []byte("test data")}

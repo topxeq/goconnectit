@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/topxeq/goconnectit"
+	"goconnectit"
 )
 
 func main() {
