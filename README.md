@@ -1,11 +1,11 @@
 # goconnectit
 
-A Go-based proxy service that provides encrypted communication between server and client.
+A Go-based encrypted SOCKS5 proxy service with server and client components.
 
 ## Features
 
 - **Multiple Encryption Methods**: Supports DES, TXDEF, TXDEE, and TXDE encryption algorithms
-- **Multi-protocol Support**: Client provides http/https/socks5 proxy on a single port
+- **SOCKS5 Proxy**: Full SOCKS5 protocol support (IPv4, IPv6, domain name)
 - **Cross-platform**: Supports both Windows and Linux operating systems
 - **Easy to use**: Simple command-line interface with configurable parameters
 - **Modular design**: Can be used as a library in other Go projects
@@ -71,8 +71,10 @@ goconnectit/
 
 ### Server Mode
 
+Run on a remote server:
+
 ```bash
-./goconnectit.exe -mode server -addr 0.0.0.0:8888 -password 12345678 -encrypt txdee
+./goconnectit -mode server -addr 0.0.0.0:8888 -password yourpassword -encrypt txdee
 ```
 
 - `-mode`: Operation mode (required, either "server" or "client")
@@ -83,16 +85,22 @@ goconnectit/
 
 ### Client Mode
 
+Run on your local machine:
+
 ```bash
-./goconnectit.exe -mode client -server 127.0.0.1:8888 -local 127.0.0.1:1080 -password 12345678 -encrypt txdee
+./goconnectit -mode client -server your-server:8888 -local 127.0.0.1:1080 -password yourpassword -encrypt txdee
 ```
 
 - `-mode`: Operation mode (required, either "server" or "client")
 - `-server`: Server address (default: 127.0.0.1:8888)
-- `-local`: Local proxy address (default: 127.0.0.1:1080)
+- `-local`: Local SOCKS5 proxy address (default: 127.0.0.1:1080)
 - `-password`: Encryption password (default: 12345678)
 - `-encrypt`: Encryption method: des, txdef, txdee, or txde (default: des)
 - `-debug` or `-v`: Enable verbose logging
+
+### Using the Proxy
+
+Configure your application or browser to use SOCKS5 proxy at `127.0.0.1:1080`.
 
 ## As a Library
 
@@ -102,11 +110,11 @@ You can also use goconnectit as a library in your own Go projects:
 import "github.com/topxeq/goconnectit"
 
 // Create a server with TXDEE encryption
-server := goconnectit.NewServer("0.0.0.0:8888", "12345678", false, "txdee")
+server := goconnectit.NewServer("0.0.0.0:8888", "yourpassword", false, "txdee")
 go server.Start()
 
 // Create a client with TXDEE encryption
-client := goconnectit.NewClient("127.0.0.1:8888", "127.0.0.1:1080", "12345678", false, "txdee")
+client := goconnectit.NewClient("your-server:8888", "127.0.0.1:1080", "yourpassword", false, "txdee")
 go client.Start()
 ```
 
