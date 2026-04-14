@@ -102,11 +102,11 @@ You can also use goconnectit as a library in your own Go projects:
 import "github.com/topxeq/goconnectit"
 
 // Create a server with TXDEE encryption
-server := goconnectit.NewServer("0.0.0.0:8888", "12345678", false, goconnectit.EncryptMethodTXDEE)
+server := goconnectit.NewServer("0.0.0.0:8888", "12345678", false, "txdee")
 go server.Start()
 
 // Create a client with TXDEE encryption
-client := goconnectit.NewClient("127.0.0.1:8888", "127.0.0.1:1080", "12345678", false, goconnectit.EncryptMethodTXDEE)
+client := goconnectit.NewClient("127.0.0.1:8888", "127.0.0.1:1080", "12345678", false, "txdee")
 go client.Start()
 ```
 
