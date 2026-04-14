@@ -1,268 +1,122 @@
 # goconnectit
 
-An encrypted TCP proxy service with HTTP/HTTPS/SOCKS5 support, written in Go.
+A Go-based proxy service that provides encrypted communication between server and client.
 
 ## Features
 
-- **Encrypted Tunnel**: AES-256-CTR stream encryption with password-based authentication
-- **Multi-Protocol Support**: HTTP, HTTPS (CONNECT), and SOCKS5 proxy on a single port
-- **Cross-Platform**: Works on Windows, Linux, and macOS
-- **Easy to Use**: Simple command-line interface with REPL control
-- **Library Ready**: Clean API for embedding in other applications
+- **Multiple Encryption Methods**: Supports DES, TXDEF, TXDEE, and TXDE encryption algorithms
+- **Multi-protocol Support**: Client provides http/https/socks5 proxy on a single port
+- **Cross-platform**: Supports both Windows and Linux operating systems
+- **Easy to use**: Simple command-line interface with configurable parameters
+- **Modular design**: Can be used as a library in other Go projects
+- **Single Executable**: Combined server and client in one binary
+- **Zero external dependencies**: All encryption algorithms are implemented inline
+
+## Encryption Methods
+
+| Method | Extra Bytes | Description |
+|--------|-------------|-------------|
+| `des` | 8 (IV) | DES encryption in CTR mode with random IV |
+| `txdef` | 2~6 bytes | Custom encryption with variable random header |
+| `txdee` | 4 bytes | Custom encryption with fixed 4-byte header/trailer |
+| `txde` | 0 bytes | Lightweight stream encryption, no extra bytes |
+
+### Algorithm Details
+
+**TXDEF**:
+- Adds 2~6 random bytes (based on password's SumBytes)
+- Uses `randomBytes[encIndex]` as key byte
+- Formula: `dst[i] = src[i] + code[idx%len] + byte(i+1) + keyByte`
+
+**TXDEE**:
+- Adds 4 bytes (2 random header + 2 random trailer)
+- Uses second header byte as key byte
+- Formula: `dst[i] = src[i] + code[idx%len] + byte(i+1) + keyByte`
+
+**TXDE**:
+- No extra bytes added
+- Formula: `dst[i] = src[i] + code[idx%len] + byte(i+1)`
+- Best for bandwidth-sensitive scenarios
+
+## Directory Structure
+
+```
+goconnectit/
+├── cmd/
+│   └── main.go           # Combined server/client main program
+├── goconnectit.go        # Core library functions
+├── goconnectit_test.go   # Library tests
+├── go.mod                # Go module file
+└── README.md             # This file
+```
 
 ## Installation
 
-### From Source
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/topxeq/goconnectit.git
+   cd goconnectit
+   ```
 
-```bash
-git clone https://github.com/topxeq/goconnectit.git
-cd goconnectit
-go build -o goconnectit ./cmd
-```
+2. Build the combined executable:
+   ```bash
+   # Build for Windows
+   go build -o goconnectit.exe cmd/main.go
 
-### Pre-built Binaries
-
-Download from the [Releases](https://github.com/topxeq/goconnectit/releases) page.
+   # Build for Linux
+   go build -o goconnectit cmd/main.go
+   ```
 
 ## Usage
 
 ### Server Mode
 
-Start the server on a specified port:
-
 ```bash
-goconnectit -mode server -listen :8443 -password yoursecret
+./goconnectit.exe -mode server -addr 0.0.0.0:8888 -password 12345678 -encrypt txdee
 ```
+
+- `-mode`: Operation mode (required, either "server" or "client")
+- `-addr`: Server listening address (default: 0.0.0.0:8888)
+- `-password`: Encryption password (default: 12345678)
+- `-encrypt`: Encryption method: des, txdef, txdee, or txde (default: des)
+- `-debug` or `-v`: Enable verbose logging
 
 ### Client Mode
 
-Start the client and connect to the server:
-
 ```bash
-goconnectit -mode client -listen :8080 -server yourserver:8443 -password yoursecret
+./goconnectit.exe -mode client -server 127.0.0.1:8888 -local 127.0.0.1:1080 -password 12345678 -encrypt txdee
 ```
 
-### Command Line Options
+- `-mode`: Operation mode (required, either "server" or "client")
+- `-server`: Server address (default: 127.0.0.1:8888)
+- `-local`: Local proxy address (default: 127.0.0.1:1080)
+- `-password`: Encryption password (default: 12345678)
+- `-encrypt`: Encryption method: des, txdef, txdee, or txde (default: des)
+- `-debug` or `-v`: Enable verbose logging
 
-```
-Usage: goconnectit [options]
+## As a Library
 
-Options:
-  -mode string        "server" or "client" (required)
-  -listen string      Address to listen on (default ":8080")
-  -server string      Server address (client mode, required)
-  -password string    Encryption password (required)
-  -verbose            Enable verbose output
-  -version            Show version information
-  -help               Show help information
-```
-
-### Using as a Proxy
-
-Once the client is running, you can use it as an HTTP/HTTPS/SOCKS5 proxy:
-
-**HTTP/HTTPS Proxy:**
-```bash
-curl -x http://localhost:8080 http://httpbin.org/ip
-curl -x http://localhost:8080 https://www.example.com
-```
-
-**SOCKS5 Proxy:**
-```bash
-curl --socks5 localhost:8080 http://httpbin.org/ip
-```
-
-**Environment Variables:**
-```bash
-export HTTP_PROXY=http://localhost:8080
-export HTTPS_PROXY=http://localhost:8080
-export ALL_PROXY=socks5://localhost:8080
-```
-
-### REPL Commands
-
-While running, you can interact with the service through the REPL:
-
-| Command | Description |
-|---------|-------------|
-| `status` | Show service status |
-| `connections` | Show active connection count |
-| `stop` | Stop the service |
-| `help` | Show available commands |
-| `quit` / `exit` | Stop and exit |
-
-## Library Usage
-
-You can use goconnectit as a library in your Go applications:
+You can also use goconnectit as a library in your own Go projects:
 
 ```go
-package main
+import "github.com/topxeq/goconnectit"
 
-import (
-    "fmt"
-    "log"
+// Create a server with TXDEE encryption
+server := goconnectit.NewServer("0.0.0.0:8888", "12345678", false, goconnectit.EncryptMethodTXDEE)
+go server.Start()
 
-    "goconnectit"
-)
-
-func main() {
-    // Start server
-    server, err := goconnectit.StartServer(":8443", "secret", true)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer server.Stop()
-
-    // Start client
-    client, err := goconnectit.StartClient(":8080", "localhost:8443", "secret", true)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer client.Stop()
-
-    // Check status
-    status := client.Status()
-    fmt.Printf("Client running: %v, Local: %s, Server: %s\n",
-        status.Running, status.LocalAddr, status.ServerAddr)
-
-    // Get connection count
-    conns := client.Connections()
-    fmt.Printf("Active connections: %d\n", conns)
-}
+// Create a client with TXDEE encryption
+client := goconnectit.NewClient("127.0.0.1:8888", "127.0.0.1:1080", "12345678", false, goconnectit.EncryptMethodTXDEE)
+go client.Start()
 ```
 
-### API Reference
+## Security
 
-**Server Functions:**
-```go
-// StartServer starts a new proxy server
-// listenAddr: address to listen on (e.g., ":8443")
-// password: encryption password
-// verbose: enable debug logging
-func StartServer(listenAddr, password string, verbose bool) (*Server, error)
-
-// Stop stops the server
-func (s *Server) Stop() error
-
-// Status returns the current server status
-func (s *Server) Status() ServerStatus
-
-// Connections returns the number of active connections
-func (s *Server) Connections() int
-```
-
-**Client Functions:**
-```go
-// StartClient starts a new proxy client
-// localAddr: local proxy address (e.g., ":8080")
-// serverAddr: remote server address (e.g., "server:8443")
-// password: encryption password
-// verbose: enable debug logging
-func StartClient(localAddr, serverAddr, password string, verbose bool) (*Client, error)
-
-// Stop stops the client
-func (c *Client) Stop() error
-
-// Status returns the current client status
-func (c *Client) Status() ClientStatus
-
-// Connections returns the number of active connections
-func (c *Client) Connections() int
-```
-
-**Utility Functions:**
-```go
-// EncryptData encrypts a byte slice using the password
-func EncryptData(data []byte, password string) ([]byte, error)
-
-// DecryptData decrypts a byte slice using the password
-func DecryptData(data []byte, password string) ([]byte, error)
-```
-
-## Architecture
-
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│  Application│────▶│   Client    │────▶│   Server    │────▶ Target
-│   (curl)    │     │ (Proxy Port)│     │ (Encrypted) │
-└─────────────┘     └─────────────┘     └─────────────┘
-                          │                    │
-                    HTTP/HTTPS/SOCKS5    AES-256-CTR
-```
-
-### Encryption
-
-- **Algorithm**: AES-256-CTR (Counter mode)
-- **Key Derivation**: SHA-256 hash of password
-- **IV Exchange**: Random IV exchanged at connection start
-- **Stream Encryption**: No padding required, suitable for streaming
-
-### Protocol Detection
-
-The client automatically detects the protocol based on the first byte:
-- `0x05`: SOCKS5
-- `C`, `G`, `P`, `D`, `H`: HTTP (CONNECT, GET, POST, DELETE, HEAD)
-
-## Testing
-
-Run the test suite:
-
-```bash
-# Run all tests
-go test -v ./...
-
-# Run with coverage
-go test -cover ./...
-
-# Run integration tests
-go test -v -run Integration ./...
-```
-
-### Coverage
-
-The project aims for >= 80% test coverage:
-
-```bash
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
-```
-
-## Building
-
-### Local Build
-
-```bash
-go build -o goconnectit ./cmd
-```
-
-### Cross-Platform Build
-
-```bash
-# Windows
-GOOS=windows GOARCH=amd64 go build -o goconnectit-windows-amd64.exe ./cmd
-
-# Linux
-GOOS=linux GOARCH=amd64 go build -o goconnectit-linux-amd64 ./cmd
-
-# macOS
-GOOS=darwin GOARCH=amd64 go build -o goconnectit-darwin-amd64 ./cmd
-GOOS=darwin GOARCH=arm64 go build -o goconnectit-darwin-arm64 ./cmd
-```
-
-## Security Considerations
-
-1. **Password Protection**: Choose a strong password to prevent brute-force attacks
-2. **Network Security**: The encryption protects data in transit but doesn't provide authentication beyond the password
-3. **Production Use**: Consider adding TLS layer for additional security in production environments
+- DES: Uses DES encryption in CTR mode with a random IV for each connection
+- TXDEF/TXDEE/TXDE: Custom stream ciphers with password-derived keys
+- Make sure to use a strong password (at least 8 characters) and keep it secret
+- Both server and client must use the same encryption method and password
 
 ## License
 
-MIT License
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+This project is licensed under the MIT License.
