@@ -52,20 +52,39 @@ goconnectit/
 
 ## Installation
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/topxeq/goconnectit.git
-   cd goconnectit
-   ```
+### Quick Install (Recommended)
 
-2. Build the combined executable:
-   ```bash
-   # Build for Windows
-   go build -o goconnectit.exe cmd/main.go
+**Linux / macOS:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/topxeq/goconnectit/master/install.sh | bash
+```
 
-   # Build for Linux
-   go build -o goconnectit cmd/main.go
-   ```
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/topxeq/goconnectit/master/install.ps1 | iex
+```
+
+### Manual Install
+
+Download the latest release from [GitHub Releases](https://github.com/topxeq/goconnectit/releases):
+
+| Platform | File |
+|----------|------|
+| Linux x64 | goconnectit-linux-amd64.tar.gz |
+| Linux ARM64 | goconnectit-linux-arm64.tar.gz |
+| macOS Intel | goconnectit-darwin-amd64.tar.gz |
+| macOS Apple Silicon | goconnectit-darwin-arm64.tar.gz |
+| Windows x64 | goconnectit-windows-amd64.zip |
+
+Extract and place the binary in your PATH.
+
+### Build from Source
+
+```bash
+git clone https://github.com/topxeq/goconnectit.git
+cd goconnectit
+go build -o goconnectit cmd/main.go
+```
 
 ## Usage
 
