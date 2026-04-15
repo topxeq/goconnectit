@@ -8,7 +8,10 @@ import (
 	"goconnectit"
 )
 
+var version = "v1.1.0"
+
 func main() {
+	showVersion := flag.Bool("version", false, "Show version information")
 	mode := flag.String("mode", "server", "Mode: server or client")
 	addr := flag.String("addr", "0.0.0.0:8888", "Server listening address (for server mode)")
 	serverAddr := flag.String("server", "127.0.0.1:8888", "Server address (for client mode)")
@@ -18,6 +21,11 @@ func main() {
 	encrypt := flag.String("encrypt", "des", "Encryption method: des, txdef, txdee, or txde")
 	flag.BoolVar(verbose, "v", false, "Enable verbose mode (shorthand)")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("goconnectit %s\n", version)
+		os.Exit(0)
+	}
 
 	if *mode != "server" && *mode != "client" {
 		fmt.Printf("Invalid mode: %s. Mode must be 'server' or 'client'.\n", *mode)
