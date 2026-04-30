@@ -384,20 +384,30 @@ func createDESStreams(password string, conn net.Conn) (*encryptedConn, error) {
 		return nil, err
 	}
 
-	iv := make([]byte, des.BlockSize)
-	_, err = rand.Read(iv)
+	// Generate IV for write (encrypt) direction and send to peer
+	ivWrite := make([]byte, des.BlockSize)
+	_, err = rand.Read(ivWrite)
+	if err != nil {
+		return nil, err
+	}
+	_, err = conn.Write(ivWrite)
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = conn.Write(iv)
+	// Read IV for read (decrypt) direction from peer
+	ivRead := make([]byte, des.BlockSize)
+	_, err = io.ReadFull(conn, ivRead)
 	if err != nil {
 		return nil, err
 	}
 
-	stream := cipher.NewCTR(block, iv)
-	reader := &cipher.StreamReader{S: stream, R: conn}
-	writer := &cipher.StreamWriter{S: stream, W: conn}
+	// Separate streams for read and write — each direction has its own keystream
+	readStream := cipher.NewCTR(block, ivRead)
+	writeStream := cipher.NewCTR(block, ivWrite)
+
+	reader := &cipher.StreamReader{S: readStream, R: conn}
+	writer := &cipher.StreamWriter{S: writeStream, W: conn}
 
 	return &encryptedConn{reader: reader, writer: writer, conn: conn}, nil
 }
@@ -490,6 +500,7 @@ func (s *Server) Start() error {
 	}
 	defer listener.Close()
 
+	s.Addr = listener.Addr().String()
 	log(s.Verbose, "Server started on %s", s.Addr)
 
 	for {
@@ -608,6 +619,7 @@ func (c *Client) Start() error {
 	}
 	defer listener.Close()
 
+	c.LocalAddr = listener.Addr().String()
 	log(c.Verbose, "Client started on %s", c.LocalAddr)
 
 	for {

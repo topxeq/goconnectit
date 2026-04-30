@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"goconnectit"
+	goconnectit "github.com/topxeq/goconnectit"
 )
 
 var version = "v1.1.0"

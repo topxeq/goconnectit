@@ -334,6 +334,191 @@ func TestTXDEEncryption(t *testing.T) {
 	}
 }
 
+// TestDESRoundtrip tests DES-CTR bidirectional encrypted connection over TCP
+func TestDESRoundtrip(t *testing.T) {
+	password := "12345678"
+
+	// Use real TCP to avoid net.Pipe deadlock during IV exchange
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen error: %v", err)
+	}
+	defer listener.Close()
+
+	serverReady := make(chan net.Conn)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			t.Errorf("Accept error: %v", err)
+			close(serverReady)
+			return
+		}
+		serverReady <- conn
+	}()
+
+	clientConn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Dial error: %v", err)
+	}
+	defer clientConn.Close()
+
+	serverConn := <-serverReady
+	if serverConn == nil {
+		t.Fatal("Server connection failed")
+	}
+	defer serverConn.Close()
+
+	// Both sides create encrypted streams concurrently (IV exchange requires both write+read)
+	serverEncCh := make(chan netConn)
+	go func() {
+		enc, err := createDESStreams(password, serverConn)
+		if err != nil {
+			t.Errorf("Server createDESStreams error: %v", err)
+			close(serverEncCh)
+			return
+		}
+		serverEncCh <- enc
+	}()
+
+	clientEnc, err := createDESStreams(password, clientConn)
+	if err != nil {
+		t.Fatalf("Client createDESStreams error: %v", err)
+	}
+
+	serverEnc := <-serverEncCh
+	if serverEnc == nil {
+		t.Fatal("Server encrypted stream failed")
+	}
+
+	// Test client→server direction
+	testData := []byte("hello world test data for DES CTR roundtrip")
+
+	serverReadDone := make(chan struct{})
+	go func() {
+		buf := make([]byte, 1024)
+		n, err := serverEnc.Read(buf)
+		if err != nil {
+			t.Errorf("Server read error: %v", err)
+			close(serverReadDone)
+			return
+		}
+		if string(buf[:n]) != string(testData) {
+			t.Errorf("Server got %q, want %q", string(buf[:n]), string(testData))
+		}
+		close(serverReadDone)
+	}()
+
+	_, err = clientEnc.Write(testData)
+	if err != nil {
+		t.Fatalf("Client write error: %v", err)
+	}
+	<-serverReadDone
+
+	// Test server→client direction
+	responseData := []byte("response from server")
+	clientReadDone := make(chan struct{})
+	go func() {
+		buf := make([]byte, 1024)
+		n, err := clientEnc.Read(buf)
+		if err != nil {
+			t.Errorf("Client read error: %v", err)
+			close(clientReadDone)
+			return
+		}
+		if string(buf[:n]) != string(responseData) {
+			t.Errorf("Client got %q, want %q", string(buf[:n]), string(responseData))
+		}
+		close(clientReadDone)
+	}()
+
+	_, err = serverEnc.Write(responseData)
+	if err != nil {
+		t.Fatalf("Server write error: %v", err)
+	}
+	<-clientReadDone
+}
+
+// TestDESFullRoundtrip tests DES-CTR with multiple sequential writes
+func TestDESFullRoundtrip(t *testing.T) {
+	password := "12345678"
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen error: %v", err)
+	}
+	defer listener.Close()
+
+	serverReady := make(chan net.Conn)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			t.Errorf("Accept error: %v", err)
+			close(serverReady)
+			return
+		}
+		serverReady <- conn
+	}()
+
+	clientConn, err := net.Dial("tcp", listener.Addr().String())
+	if err != nil {
+		t.Fatalf("Dial error: %v", err)
+	}
+	defer clientConn.Close()
+
+	serverConn := <-serverReady
+	if serverConn == nil {
+		t.Fatal("Server connection failed")
+	}
+	defer serverConn.Close()
+
+	serverEncCh := make(chan netConn)
+	go func() {
+		enc, err := createDESStreams(password, serverConn)
+		if err != nil {
+			t.Errorf("Server createDESStreams error: %v", err)
+			close(serverEncCh)
+			return
+		}
+		serverEncCh <- enc
+	}()
+
+	clientEnc, err := createDESStreams(password, clientConn)
+	if err != nil {
+		t.Fatalf("Client createDESStreams error: %v", err)
+	}
+
+	serverEnc := <-serverEncCh
+	if serverEnc == nil {
+		t.Fatal("Server encrypted stream failed")
+	}
+
+	// Multiple sequential writes from client to server
+	messages := []string{"msg1", "msg2", "msg3_longer_message_for_testing"}
+
+	for i, msg := range messages {
+		serverReadDone := make(chan struct{})
+		go func() {
+			buf := make([]byte, 1024)
+			n, err := serverEnc.Read(buf)
+			if err != nil {
+				t.Errorf("Server read error on msg %d: %v", i, err)
+				close(serverReadDone)
+				return
+			}
+			if string(buf[:n]) != msg {
+				t.Errorf("Server got %q on msg %d, want %q", string(buf[:n]), i, msg)
+			}
+			close(serverReadDone)
+		}()
+
+		_, err := clientEnc.Write([]byte(msg))
+		if err != nil {
+			t.Fatalf("Client write error on msg %d: %v", i, err)
+		}
+		<-serverReadDone
+	}
+}
+
 // TestTXDEFEncryptedConn tests TXDEF encrypted connection with chunked protocol
 func TestTXDEFEncryptedConn(t *testing.T) {
 	password := "12345678"
