@@ -598,7 +598,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 		return
 	}
 
-	remoteConn, err := net.Dial("tcp", targetAddr)
+	// Bounded dial: an unreachable target (e.g. GFW-blocked 8.8.8.8:53 from a
+	// mainland exit) must eventually produce a SOCKS5 failure reply instead of
+	// hanging the client forever.
+	remoteConn, err := net.DialTimeout("tcp", targetAddr, 10*time.Second)
 	if err != nil {
 		log(s.Verbose, "Failed to connect to %s: %v", targetAddr, err)
 		encryptedConn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
@@ -636,7 +639,7 @@ func (c *Client) Start() error {
 func (c *Client) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	serverConn, err := net.Dial("tcp", c.ServerAddr)
+	serverConn, err := net.DialTimeout("tcp", c.ServerAddr, 10*time.Second)
 	if err != nil {
 		log(c.Verbose, "Failed to connect to server: %v", err)
 		return
